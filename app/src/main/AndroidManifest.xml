@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.example.confessionapp">
+
+    <!-- Permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" /> <!-- WebRTC might request it, though we aim for audio-only -->
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ConfessionApp"
+        tools:targetApi="31">
+
+        <activity
+            android:name=".ui.activities.LoginActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".ui.activities.PriestLoginActivity" />
+        <activity android:name=".ui.activities.PriestRegistrationActivity" />
+        <activity android:name=".ui.activities.ConfessorDashboardActivity" />
+        <activity android:name=".ui.activities.PriestDashboardActivity" />
+        <activity android:name=".ui.activities.PriestVerificationActivity" />
+        <activity android:name=".ui.activities.ConfessionActivity" />
+        <activity android:name=".ui.activities.GooglePayDonationActivity" />
+
+
+        <!-- Google Pay API metadata -->
+        <meta-data
+            android:name="com.google.android.gms.wallet.api.enabled"
+            android:value="true" />
+
+    </application>
+
+</manifest>
