@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.confessionapp">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ConfessionApp">
+        <!-- Assuming a theme named Theme.ConfessionApp exists or will be created -->
+        <!-- Also assuming standard launcher icons exist or will be created -->
+        <!-- Add a placeholder for app_name string resource -->
+
+        <activity
+            android:name=".ui.priest.PriestDashboardActivity"
+            android:exported="true">
+            <!-- Set one activity as launcher for now, can be changed later -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ui.confessor.ConfessorHomeActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.call.ConfessionActivity"
+            android:exported="false" />
+
+    </application>
+
+</manifest>
