@@ -1,0 +1,47 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Match verification document paths
+    // Example path: verification/{requestId}/{documentType}/{fileName}
+    match /verification/{requestId}/{documentType}/{fileName} {
+
+      // Helper function to check if the user is an admin
+      function isAdmin() {
+        return request.auth != null && request.auth.token.admin == true;
+      }
+
+      // Function to check if the user is the owner of the request.
+      // This relies on custom metadata 'priestAuthId' set during upload by the backend API.
+      function isOwnerViaMetadata() {
+        // Ensure priestAuthId metadata exists and matches the authenticated user's UID
+        return request.auth != null &&
+               resource.metadata.priestAuthId != null &&
+               request.auth.uid == resource.metadata.priestAuthId;
+      }
+
+      // WRITE (Uploads):
+      // The backend API (using Admin SDK) bypasses these rules for writes.
+      // These rules would apply if client-side uploads were allowed directly to this path,
+      // which is NOT the current design for security and data integrity reasons.
+      // Therefore, direct client writes are disallowed.
+      allow write: if false;
+
+      // READ:
+      // - Admins can read any verification document.
+      // - The owner (priest), identified by 'priestAuthId' in file metadata, can read their own documents.
+      allow read: if isAdmin() || isOwnerViaMetadata();
+
+      // DELETE:
+      // Only allow backend (Admin SDK) to delete.
+      // Direct client-side deletion is disallowed.
+      allow delete: if false;
+    }
+
+    // Add rules for other storage paths as needed.
+    // For example, if users have profile pictures:
+    // match /userProfilePictures/{userId}/{fileName} {
+    //   allow read: if true; // Publicly readable or only by owner/friends
+    //   allow write: if request.auth != null && request.auth.uid == userId;
+    // }
+  }
+}

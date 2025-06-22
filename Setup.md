@@ -398,14 +398,34 @@ This comprehensive guide will walk you through all the steps needed to set up an
    ```javascript
    // Initialize Firebase Admin SDK
    const admin = require('firebase-admin');
-   const SERVICE_ACCOUNT_KEY_PATH = './firebase-admin-key.json'; // Or your chosen path
-   const FIREBASE_STORAGE_BUCKET = 'your-project-id.appspot.com'; // **Replace with your actual bucket URL**
+   const SERVICE_ACCOUNT_KEY_PATH = './firebase-admin-key.json'; // Or your chosen path. For Cloud Run, consider using service account identity.
+   const FIREBASE_STORAGE_BUCKET = process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com'; // **Replace with your actual bucket URL or use ENV var**
 
    try {
-     admin.initializeApp({
-       credential: admin.credential.cert(SERVICE_ACCOUNT_KEY_PATH),
-       storageBucket: FIREBASE_STORAGE_BUCKET
-     });
+     // If GOOGLE_APPLICATION_CREDENTIALS is set (e.g., by Cloud Run with a service account),
+     // and SERVICE_ACCOUNT_KEY_PATH is relative, it might not be used directly.
+     // For local dev, SERVICE_ACCOUNT_KEY_PATH is primary.
+     // For Cloud Run with service account identity, initializeApp() can be called without arguments.
+     let credential;
+     if (process.env.NODE_ENV === 'production' && !process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.SERVICE_ACCOUNT_KEY_PATH_IN_FILESYSTEM) {
+        // Example: if key is bundled and path is absolute/known
+        credential = admin.credential.cert(process.env.SERVICE_ACCOUNT_KEY_PATH_IN_FILESYSTEM);
+     } else if (process.env.NODE_ENV !== 'production' && SERVICE_ACCOUNT_KEY_PATH) {
+        credential = admin.credential.cert(SERVICE_ACCOUNT_KEY_PATH);
+     }
+     // If credential is not set, Admin SDK will try to use Application Default Credentials (ADC)
+     // which is how it works on Cloud Run when a service account is assigned to the service.
+
+     if (credential) {
+       admin.initializeApp({
+         credential,
+         storageBucket: FIREBASE_STORAGE_BUCKET
+       });
+     } else {
+       admin.initializeApp({ // For ADC on Cloud Run or local gcloud auth
+         storageBucket: FIREBASE_STORAGE_BUCKET
+       });
+     }
      console.log('Firebase Admin SDK initialized successfully.');
    } catch (error) {
      console.error('Error initializing Firebase Admin SDK:', error);
@@ -413,13 +433,16 @@ This comprehensive guide will walk you through all the steps needed to set up an
    }
    ```
    The API server implements the following key endpoints:
-    - `POST /verify-priest`: Handles submission of priest verification details and documents. Documents are uploaded to Firebase Storage, and a request record is created in Firestore.
+    - `POST /verify-priest`: Handles submission of priest verification details and documents.
     - `GET /verification-status/:requestId`: Allows checking the status of a submitted verification request.
-    - `PUT /admin/verify-request/:requestId`: (Admin functionality) Allows updating the status of a request (e.g., to 'approved' or 'rejected'). Requires proper admin authentication in production.
+    - `PUT /admin/verify-request/:requestId`: (Admin functionality) Allows updating the status of a request.
+        - **Admin Authentication**: This endpoint is protected and requires the caller to be authenticated via Firebase Authentication and have an `{ admin: true }` custom claim. The client must send a Firebase ID token in the `Authorization: Bearer <ID_TOKEN>` header. Custom claims are set by an existing administrator using the Firebase Admin SDK (e.g., via a separate script).
 
-6. Start the server with PM2:
+6. Start the server with PM2 (for VM deployments):
    ```bash
-   pm2 start verification_api_server.js --name verification-api
+   npm install pm2 -g # If not already installed
+   pm2 start verification_api_server.js --name verification-api \
+     --env LOG_LEVEL=info FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com
    pm2 save
    pm2 startup
    ```
@@ -487,8 +510,15 @@ This comprehensive guide will walk you through all the steps needed to set up an
    gcloud run deploy verification-api \
      --image gcr.io/your-project-id/verification-api \
      --platform managed \
-     --allow-unauthenticated
+     --region your-chosen-region \
+     --service-account your-cloud-run-service-account@your-project-id.iam.gserviceaccount.com \
+     --set-env-vars FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com,LOG_LEVEL=info \
+     --allow-unauthenticated # API handles its own auth for protected routes
    ```
+   **Note on Service Accounts and Keys for Cloud Run:**
+   - It's recommended to run the Cloud Run service with a dedicated IAM service account that has appropriate permissions (e.g., Firebase Admin, Storage Object Admin for the bucket, Cloud Datastore User for Firestore).
+   - If using a dedicated service account, the Admin SDK can automatically discover credentials, and you don't need to bundle `firebase-admin-key.json` or set `GOOGLE_APPLICATION_CREDENTIALS` explicitly in Cloud Run environment variables.
+   - Ensure this service account has the "Service Account Token Creator" role if other services need to impersonate it, and "Firebase Admin" or equivalent roles for Firebase access.
 
 ### 5.6 Update App Configuration
 

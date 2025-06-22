@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Verification Requests
+    match /verificationRequests/{requestId} {
+      // Helper function to check if the user is an admin
+      function isAdmin() {
+        return request.auth != null && request.auth.token.admin == true;
+      }
+
+      // Helper function to check if the user is the owner of the request
+      // Assumes 'priestAuthId' on the document is the Firebase Auth UID of the priest who submitted
+      function isOwner() {
+        return request.auth != null && request.auth.uid == resource.data.priestAuthId;
+      }
+
+      // CREATE: A priest can create their own verification request.
+      // We check if the incoming document's priestAuthId matches the requester's UID.
+      // This assumes the priest is authenticated when submitting the request.
+      allow create: if request.auth != null &&
+                      request.resource.data.priestAuthId == request.auth.uid &&
+                      request.resource.data.status == 'pending'; // Enforce initial status
+
+      // READ:
+      // - The owner of the request can read it.
+      // - An admin can read any request.
+      allow read: if isOwner() || isAdmin();
+
+      // UPDATE:
+      // - Only admins can update requests (e.g., status, adminNotes).
+      // - Prevent owner from updating after creation.
+      // - Ensure admins cannot change immutable fields like priestAuthId, submittedAt, requestId.
+      // - Allowable status transitions can also be enforced here if needed.
+      allow update: if isAdmin() &&
+                      !(request.resource.data.priestAuthId != resource.data.priestAuthId) &&
+                      !(request.resource.data.submittedAt != resource.data.submittedAt) &&
+                      !(request.resource.data.requestId != resource.data.requestId);
+
+      // DELETE: Generally, disallow direct client deletion.
+      // Admins could delete via a backend function if necessary (soft delete preferred).
+      allow delete: if false;
+    }
+
+    // Example for a 'users' collection, assuming users manage their own profiles.
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Add rules for other collections as needed.
+  }
+}

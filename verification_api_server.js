@@ -204,24 +204,34 @@ app.get('/verification-status/:requestId', async (req, res) => {
 // and authorization checks.
 
 const isAdmin = async (req, res, next) => {
-  // Placeholder for admin check.
-  // In a real app, verify an ID token and check for admin custom claims.
-  // const idToken = req.headers.authorization?.split('Bearer ')[1];
-  // if (!idToken) return res.status(401).send({ error: 'Unauthorized: No token provided.' });
-  // try {
-  //   const decodedToken = await admin.auth().verifyIdToken(idToken);
-  //   if (decodedToken.admin === true) { // Assuming 'admin' custom claim
-  //     req.user = decodedToken; // Add user to request object
-  //     return next();
-  //   } else {
-  //     return res.status(403).send({ error: 'Forbidden: User is not an admin.' });
-  //   }
-  // } catch (error) {
-  //   console.error('Error verifying admin token:', error);
-  //   return res.status(401).send({ error: 'Unauthorized: Invalid token.' });
-  // }
-  console.warn('Skipping admin check for PUT /admin/verify-request - THIS IS NOT SECURE FOR PRODUCTION');
-  next(); // Bypassing admin check for now for easier testing without full auth setup
+  const authorizationHeader = req.headers.authorization;
+
+  if (!authorizationHeader || !authorizationHeader.startsWith('Bearer ')) {
+    return res.status(401).send({ error: 'Unauthorized: No token provided or malformed header.' });
+  }
+
+  const idToken = authorizationHeader.split('Bearer ')[1];
+  if (!idToken) {
+    return res.status(401).send({ error: 'Unauthorized: No token provided.' });
+  }
+
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    // Check for a custom claim like 'admin: true' or 'role: "admin"'
+    // For this example, we'll assume 'admin: true'
+    if (decodedToken.admin === true) {
+      req.user = decodedToken; // Add user (with UID, claims, etc.) to request object
+      return next();
+    } else {
+      return res.status(403).send({ error: 'Forbidden: User does not have admin privileges.' });
+    }
+  } catch (error) {
+    console.error('Error verifying admin token:', error);
+    if (error.code === 'auth/id-token-expired') {
+      return res.status(401).send({ error: 'Unauthorized: Token expired.' });
+    }
+    return res.status(401).send({ error: 'Unauthorized: Invalid token.' });
+  }
 };
 
 /**

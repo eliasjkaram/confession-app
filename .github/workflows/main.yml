@@ -1,0 +1,121 @@
+# .github/workflows/main.yml
+
+name: CI/CD for Priest Verification API
+
+on:
+  push:
+    branches:
+      - main # Deploy to production on push to main
+      # - staging # Example: Deploy to staging on push to staging
+  pull_request:
+    branches:
+      - main
+      # - staging
+
+jobs:
+  build_and_test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18' # Match Dockerfile
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci # Use ci for cleaner installs in CI
+
+      # Placeholder for Firebase Emulators setup and test execution
+      # Running Firebase emulators in CI needs careful setup (e.g., Java for Firestore emulator).
+      # This section would involve:
+      # 1. npm install -g firebase-tools
+      # 2. firebase setup:emulators:firestore (if needed, or ensure Java is present)
+      # 3. firebase setup:emulators:storage
+      # 4. firebase setup:emulators:auth
+      # 5. firebase emulators:start --only auth,firestore,storage &
+      # 6. Wait for emulators to be ready
+      # 7. Run tests with environment variables pointing to emulators:
+      #    FIREBASE_AUTH_EMULATOR_HOST="localhost:9099" \
+      #    FIRESTORE_EMULATOR_HOST="localhost:8080" \
+      #    FIREBASE_STORAGE_EMULATOR_HOST="localhost:9199" \
+      #    npm test
+      # For now, we'll just run the placeholder test script from package.json
+
+      - name: Run tests (Placeholder)
+        run: |
+          echo "Running tests (conceptual)..."
+          if [ -f "package.json" ] && [ "$(jq -r .scripts.test package.json)" != "echo \"Error: no test specified\" && exit 1" ]; then
+            npm test
+          else
+            echo "Test script is default or package.json not found. Skipping actual test execution."
+            # exit 0 # Ensure CI passes for now if tests are not implemented
+          fi
+
+  deploy_to_production:
+    name: Deploy to Production (Google Cloud Run & Firebase Rules)
+    needs: build_and_test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Required for Workload Identity Federation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v1
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }} # Format: projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL_ID/providers/YOUR_PROVIDER_ID
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }} # Format: your-service-account-name@YOUR_PROJECT_ID.iam.gserviceaccount.com
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker gcr.io --quiet
+
+      - name: Build and Push Docker image to Google Container Registry (GCR)
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          docker build -t gcr.io/$GCP_PROJECT_ID/verification-api:${{ github.sha }} .
+          docker push gcr.io/$GCP_PROJECT_ID/verification-api:${{ github.sha }}
+
+      - name: Deploy to Cloud Run
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION: "us-central1" # Specify your Cloud Run region
+          FIREBASE_STORAGE_BUCKET_CONFIG: ${{ secrets.FIREBASE_STORAGE_BUCKET }} # From GitHub Secrets
+        run: |
+          gcloud run deploy verification-api \
+            --image gcr.io/$GCP_PROJECT_ID/verification-api:${{ github.sha }} \
+            --platform managed \
+            --region $GCP_REGION \
+            --allow-unauthenticated \
+            --set-env-vars "FIREBASE_STORAGE_BUCKET=$FIREBASE_STORAGE_BUCKET_CONFIG" \
+            --service-account ${{ secrets.GCP_SERVICE_ACCOUNT }} \
+            --quiet
+
+      - name: Install Firebase CLI for rules deployment
+        run: npm install -g firebase-tools
+
+      - name: Deploy Firebase Rules
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          # The gcloud auth performed by google-github-actions/auth should allow Firebase CLI to work
+          firebase deploy --only firestore:rules,storage:rules --project $GCP_PROJECT_ID --non-interactive --force
+          # Using --force as it might be needed in non-interactive environments
+          # Ensure the service account used has "Firebase Admin" or "Firebase Rules System" role for deploying rules.
+          echo "Firebase rules deployment attempted."
