@@ -398,42 +398,46 @@ This comprehensive guide will walk you through all the steps needed to set up an
    ```javascript
    // Initialize Firebase Admin SDK
    const admin = require('firebase-admin');
-   const SERVICE_ACCOUNT_KEY_PATH = './firebase-admin-key.json'; // Or your chosen path. For Cloud Run, consider using service account identity.
-   const FIREBASE_STORAGE_BUCKET = process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com'; // **Replace with your actual bucket URL or use ENV var**
+   const pino = require('pino'); // For logging context
+
+   // Configuration constants (example values, prefer environment variables)
+   const SERVICE_ACCOUNT_KEY_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS || './firebase-admin-key.json';
+   const FIREBASE_STORAGE_BUCKET_CONFIG = process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com';
+   const LOG_LEVEL_CONFIG = process.env.LOG_LEVEL || 'info';
+   const logger = pino({ level: LOG_LEVEL_CONFIG }); // Initialize logger early for setup logging
 
    try {
-     // If GOOGLE_APPLICATION_CREDENTIALS is set (e.g., by Cloud Run with a service account),
-     // and SERVICE_ACCOUNT_KEY_PATH is relative, it might not be used directly.
-     // For local dev, SERVICE_ACCOUNT_KEY_PATH is primary.
-     // For Cloud Run with service account identity, initializeApp() can be called without arguments.
-     let credential;
-     if (process.env.NODE_ENV === 'production' && !process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.SERVICE_ACCOUNT_KEY_PATH_IN_FILESYSTEM) {
-        // Example: if key is bundled and path is absolute/known
-        credential = admin.credential.cert(process.env.SERVICE_ACCOUNT_KEY_PATH_IN_FILESYSTEM);
-     } else if (process.env.NODE_ENV !== 'production' && SERVICE_ACCOUNT_KEY_PATH) {
-        credential = admin.credential.cert(SERVICE_ACCOUNT_KEY_PATH);
-     }
-     // If credential is not set, Admin SDK will try to use Application Default Credentials (ADC)
-     // which is how it works on Cloud Run when a service account is assigned to the service.
+     let firebaseAppOptions = {
+       storageBucket: FIREBASE_STORAGE_BUCKET_CONFIG,
+     };
 
-     if (credential) {
-       admin.initializeApp({
-         credential,
-         storageBucket: FIREBASE_STORAGE_BUCKET
-       });
+     if (process.env.NODE_ENV !== 'production' && SERVICE_ACCOUNT_KEY_PATH.endsWith('.json')) {
+       try {
+         require('fs').accessSync(SERVICE_ACCOUNT_KEY_PATH); // Check file existence for local dev
+         firebaseAppOptions.credential = admin.credential.cert(SERVICE_ACCOUNT_KEY_PATH);
+         logger.info(`Initializing Firebase Admin SDK with service account key: ${SERVICE_ACCOUNT_KEY_PATH}`);
+       } catch (fe) {
+         logger.warn(`Service account key file not found at ${SERVICE_ACCOUNT_KEY_PATH}. Attempting ADC if applicable.`);
+       }
+     } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+       logger.info(`Initializing Firebase Admin SDK using GOOGLE_APPLICATION_CREDENTIALS env var.`);
      } else {
-       admin.initializeApp({ // For ADC on Cloud Run or local gcloud auth
-         storageBucket: FIREBASE_STORAGE_BUCKET
-       });
+       logger.info('Initializing Firebase Admin SDK with Application Default Credentials (ADC). This is expected for Cloud Run with an assigned service account.');
      }
-     console.log('Firebase Admin SDK initialized successfully.');
+
+     admin.initializeApp(firebaseAppOptions);
+     logger.info('Firebase Admin SDK initialized successfully.');
+
    } catch (error) {
-     console.error('Error initializing Firebase Admin SDK:', error);
+     logger.fatal({ err: error }, 'FATAL: Error initializing Firebase Admin SDK');
      process.exit(1);
    }
    ```
+   The server uses `pino` for structured JSON logging. The log level can be set using the `LOG_LEVEL` environment variable (e.g., `info`, `debug`).
+
    The API server implements the following key endpoints:
     - `POST /verify-priest`: Handles submission of priest verification details and documents.
+        - **Client Requirement**: The client application **must** send the authenticated priest's Firebase Auth UID as `priestAuthId` in the request body. This is crucial for data ownership and security rules. Email can be sent as an optional `email` field.
     - `GET /verification-status/:requestId`: Allows checking the status of a submitted verification request.
     - `PUT /admin/verify-request/:requestId`: (Admin functionality) Allows updating the status of a request.
         - **Admin Authentication**: This endpoint is protected and requires the caller to be authenticated via Firebase Authentication and have an `{ admin: true }` custom claim. The client must send a Firebase ID token in the `Authorization: Bearer <ID_TOKEN>` header. Custom claims are set by an existing administrator using the Firebase Admin SDK (e.g., via a separate script).
@@ -441,8 +445,9 @@ This comprehensive guide will walk you through all the steps needed to set up an
 6. Start the server with PM2 (for VM deployments):
    ```bash
    npm install pm2 -g # If not already installed
+   # Example:
    pm2 start verification_api_server.js --name verification-api \
-     --env LOG_LEVEL=info FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com
+     --env NODE_ENV=production LOG_LEVEL=info FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
    pm2 save
    pm2 startup
    ```

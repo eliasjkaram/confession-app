@@ -1,47 +1,75 @@
 // Priest Verification API Server
-// This file will contain the Node.js Express server implementation
-// for handling priest verification requests.
 
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const morgan = require('morgan');
+// Morgan will be replaced by pino-http
+// const morgan = require('morgan');
 const admin = require('firebase-admin');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
+const pino = require('pino');
+const pinoHttp = require('pino-http');
 
 // --- Configuration ---
 const PORT = process.env.PORT || 3000;
-// Make sure to replace 'your-project-id.appspot.com' with your actual Firebase project ID
-const FIREBASE_STORAGE_BUCKET = 'your-project-id.appspot.com';
-// Path to your Firebase Admin SDK service account key
-// Ensure this file is present on your server and the path is correct.
-const SERVICE_ACCOUNT_KEY_PATH = './firebase-admin-key.json';
+const FIREBASE_STORAGE_BUCKET = process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com'; // Ensure this is set in your env
+const SERVICE_ACCOUNT_KEY_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS || './firebase-admin-key.json'; // For local dev
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+
+// --- Initialize Logger ---
+const logger = pino({ level: LOG_LEVEL });
+const httpLogger = pinoHttp({ logger });
 
 // --- Initialize Express App ---
 const app = express();
 
 // --- Initialize Firebase Admin SDK ---
 try {
-  admin.initializeApp({
-    credential: admin.credential.cert(SERVICE_ACCOUNT_KEY_PATH),
-    storageBucket: FIREBASE_STORAGE_BUCKET
-  });
-  console.log('Firebase Admin SDK initialized successfully.');
+  let firebaseAppOptions = {
+    storageBucket: FIREBASE_STORAGE_BUCKET,
+  };
+
+  // For local development, explicitly use the service account key if path is provided and valid
+  // GOOGLE_APPLICATION_CREDENTIALS env var is the standard way for ADC,
+  // but explicit path can be used for local key files not set as GOOGLE_APPLICATION_CREDENTIALS.
+  if (process.env.NODE_ENV !== 'production' && SERVICE_ACCOUNT_KEY_PATH.endsWith('.json')) {
+    try {
+        // Check if file exists, otherwise admin.credential.cert throws a less clear error
+        require('fs').accessSync(SERVICE_ACCOUNT_KEY_PATH);
+        firebaseAppOptions.credential = admin.credential.cert(SERVICE_ACCOUNT_KEY_PATH);
+        logger.info(`Initializing Firebase Admin SDK with service account key: ${SERVICE_ACCOUNT_KEY_PATH}`);
+    } catch (fe) {
+        logger.warn(`Service account key file not found at ${SERVICE_ACCOUNT_KEY_PATH} or NODE_ENV is production. Attempting ADC.`);
+        // Fall through to ADC if key not found or in production without explicit key path
+    }
+  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    // If GOOGLE_APPLICATION_CREDENTIALS is set (common in GCP environments like Cloud Run if not using service identity directly)
+    logger.info(`Initializing Firebase Admin SDK using GOOGLE_APPLICATION_CREDENTIALS: ${process.env.GOOGLE_APPLICATION_CREDENTIALS}`);
+    // No need to set credential explicitly, initializeApp will pick it up.
+  } else {
+    // Otherwise, rely on Application Default Credentials (ADC)
+    // This is typical for Cloud Run when the service has an assigned IAM service account.
+    logger.info('Initializing Firebase Admin SDK with Application Default Credentials (ADC).');
+  }
+
+  admin.initializeApp(firebaseAppOptions);
+  logger.info('Firebase Admin SDK initialized successfully.');
+
 } catch (error) {
-  console.error('Error initializing Firebase Admin SDK:', error);
-  process.exit(1); // Exit if Firebase Admin SDK fails to initialize
+  logger.fatal({ err: error }, 'FATAL: Error initializing Firebase Admin SDK');
+  process.exit(1);
 }
 
 const db = admin.firestore();
-const bucket = admin.storage().bucket();
+const bucket = admin.storage().bucket(); // Uses the storageBucket from initializeApp
 
 // --- Middleware ---
-app.use(cors()); // Enable Cross-Origin Resource Sharing
-app.use(helmet()); // Set various HTTP headers for security
-app.use(morgan('dev')); // HTTP request logger
-app.use(express.json()); // Parse JSON bodies
-app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+app.use(cors());
+app.use(helmet());
+app.use(httpLogger); // Replace morgan with pino-http
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // --- Multer Setup for File Uploads ---
 // Configure multer for memory storage. This is suitable for small files.
@@ -66,13 +94,18 @@ app.post('/verify-priest', upload.fields([
   { name: 'priestIdPhoto', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { priestName, diocese, email, additionalInfo } = req.body;
+    // Expect priestAuthId (Firebase UID) instead of email as primary identifier
+    const { priestName, diocese, priestAuthId, email, additionalInfo } = req.body;
     const files = req.files;
 
     // Validate required fields
-    if (!priestName || !diocese || !email) {
-      return res.status(400).send({ error: 'Missing required fields: priestName, diocese, email.' });
+    if (!priestName || !diocese || !priestAuthId) {
+      return res.status(400).send({ error: 'Missing required fields: priestName, diocese, priestAuthId (Firebase UID).' });
     }
+    if (email && typeof email !== 'string') { // Email is optional but should be string if provided
+        return res.status(400).send({ error: 'Invalid email format.' });
+    }
+
 
     if (!files || !files.letterOfGoodStanding || !files.priestIdPhoto) {
       return res.status(400).send({ error: 'Missing required document files: letterOfGoodStanding and priestIdPhoto.' });
@@ -91,7 +124,7 @@ app.post('/verify-priest', upload.fields([
         metadata: {
           contentType: file.mimetype,
           metadata: { // Custom metadata
-            priestId: email, // Assuming email is a unique identifier for the priest for now
+            priestAuthId: priestAuthId, // Use Firebase UID
             requestId: requestId,
             documentType: 'letterOfGoodStanding'
           }
@@ -117,7 +150,7 @@ app.post('/verify-priest', upload.fields([
         metadata: {
           contentType: file.mimetype,
           metadata: {
-            priestId: email,
+            priestAuthId: priestAuthId, // Use Firebase UID
             requestId: requestId,
             documentType: 'priestIdPhoto'
           }
@@ -140,18 +173,17 @@ app.post('/verify-priest', upload.fields([
     const verificationRequestRef = db.collection('verificationRequests').doc(requestId);
     await verificationRequestRef.set({
       requestId,
+      priestAuthId, // Store Firebase UID as the primary priest identifier
       priestName,
       diocese,
-      email,
+      email: email || null, // Store email if provided, but it's not the primary ID
       additionalInfo: additionalInfo || null,
       status: 'pending', // Initial status
       submittedAt: admin.firestore.FieldValue.serverTimestamp(),
-      filePaths: filePathsInStorage,
-      // Storing priestId (email) on the record for easier querying by admins if needed
-      // This assumes priest's email is unique and used as their identifier in Firebase Auth
-      priestAuthId: email // This should ideally be the Firebase Auth UID of the priest if they are already authenticated
+      filePaths: filePathsInStorage
     });
 
+    logger.info({ requestId, priestAuthId, priestName }, 'Verification request submitted successfully.');
     res.status(201).send({
       message: 'Verification request submitted successfully.',
       requestId: requestId,
@@ -159,7 +191,7 @@ app.post('/verify-priest', upload.fields([
     });
 
   } catch (error) {
-    console.error('Error submitting verification request:', error);
+    logger.error({ err: error, body: req.body }, 'Error submitting verification request');
     res.status(500).send({ error: 'Failed to submit verification request.' });
   }
 });
@@ -193,7 +225,7 @@ app.get('/verification-status/:requestId', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching verification status:', error);
+    logger.error({ err: error, requestId: req.params.requestId }, 'Error fetching verification status');
     res.status(500).send({ error: 'Failed to fetch verification status.' });
   }
 });
@@ -221,12 +253,14 @@ const isAdmin = async (req, res, next) => {
     // For this example, we'll assume 'admin: true'
     if (decodedToken.admin === true) {
       req.user = decodedToken; // Add user (with UID, claims, etc.) to request object
+      logger.info({ adminUid: decodedToken.uid, path: req.path }, 'Admin access granted.');
       return next();
     } else {
+      logger.warn({ userUid: decodedToken.uid, path: req.path }, 'Admin access denied: user is not an admin.');
       return res.status(403).send({ error: 'Forbidden: User does not have admin privileges.' });
     }
   } catch (error) {
-    console.error('Error verifying admin token:', error);
+    logger.error({ err: error, tokenProvided: idToken ? 'yes' : 'no' }, 'Error verifying admin token');
     if (error.code === 'auth/id-token-expired') {
       return res.status(401).send({ error: 'Unauthorized: Token expired.' });
     }
@@ -268,18 +302,20 @@ app.put('/admin/verify-request/:requestId', isAdmin, async (req, res) => {
 
     // Example: If approved, set a custom claim for the priest's Firebase Auth user
     // This assumes `priestAuthId` stored in the request is the priest's Firebase Auth UID.
-    if (status === 'approved' && doc.data().priestAuthId) {
+    const priestToVerifyAuthId = doc.data().priestAuthId; // Get the UID of the priest being verified
+    if (status === 'approved' && priestToVerifyAuthId) {
       try {
-        await admin.auth().setCustomUserClaims(doc.data().priestAuthId, { verifiedPriest: true });
-        console.log(`Custom claim 'verifiedPriest: true' set for user ${doc.data().priestAuthId}`);
+        await admin.auth().setCustomUserClaims(priestToVerifyAuthId, { verifiedPriest: true });
+        logger.info({ requestId, priestAuthId: priestToVerifyAuthId }, `Custom claim 'verifiedPriest: true' set for user.`);
       } catch (claimError) {
-        console.error(`Failed to set custom claim for ${doc.data().priestAuthId}:`, claimError);
+        logger.error({ err: claimError, requestId, priestAuthId: priestToVerifyAuthId }, 'Failed to set custom claim for verified priest.');
         // Decide if this failure should cause the main request to fail or just be logged.
-        // For now, just logging.
+        // For now, just logging. It might be important enough to cause a 500 error for the admin action.
+        // For example: return res.status(500).send({ error: 'Request status updated, but failed to set custom claim.' });
       }
     }
 
-
+    logger.info({ requestId, newStatus: status, adminUid: req.user.uid }, 'Verification request updated by admin.');
     res.status(200).send({
       message: `Verification request ${requestId} has been ${status}.`,
       requestId: requestId,
@@ -287,21 +323,23 @@ app.put('/admin/verify-request/:requestId', isAdmin, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error updating verification request:', error);
+    logger.error({ err: error, requestId: req.params.requestId, adminUid: req.user?.uid }, 'Error updating verification request');
     res.status(500).send({ error: 'Failed to update verification request.' });
   }
 });
 
 
-// --- Error Handling Middleware ---
+// --- Generic Error Handling Middleware ---
+// This should be the last middleware
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).send({ error: 'Something went wrong!' });
+  logger.error({ err: err, path: req.path, method: req.method }, 'Unhandled error occurred');
+  res.status(500).send({ error: 'Something went wrong on the server!' });
 });
 
 // --- Start Server ---
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  logger.info(`Server is running on port ${PORT}`);
 });
 
-module.exports = app; // For potential testing
+module.exports = app; // For potential testing with Supertest
