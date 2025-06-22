@@ -328,6 +328,15 @@ app.put('/admin/verify-request/:requestId', isAdmin, async (req, res) => {
   }
 });
 
+// --- Health Check Endpoint ---
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime ? `${process.uptime().toFixed(2)}s` : 'N/A' // Optional: include process uptime
+  });
+});
+
 
 // --- Generic Error Handling Middleware ---
 // This should be the last middleware

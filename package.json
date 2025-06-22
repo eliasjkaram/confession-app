@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node verification_api_server.js",
     "dev": "nodemon verification_api_server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest"
   },
   "keywords": [
     "firebase",
@@ -27,6 +27,8 @@
     "pino-http": "^9.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.0.1",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4"
   }
 }
