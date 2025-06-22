@@ -34,4 +34,32 @@ class UserRepository(private val firestore: FirebaseFirestore) {
                 onResult(false)
             }
     }
+
+    fun setPriestAvailability(uid: String, isAvailable: Boolean, onResult: (Boolean) -> Unit) {
+        firestore.collection("users").document(uid)
+            .update("isAvailableForConfession", isAvailable)
+            .addOnSuccessListener { onResult(true) }
+            .addOnFailureListener { onResult(false) }
+    }
+
+    fun getAvailablePriests(onResult: (List<Map<String, Any>>) -> Unit) {
+        firestore.collection("users")
+            .whereEqualTo("isPriestVerified", true)
+            .whereEqualTo("isAvailableForConfession", true)
+            // .get() // Original query without language filter
+
+        var query = baseQuery
+        if (!language.isNullOrBlank() && language != "Any") { // "Any" means no language filter
+            query = query.whereArrayContains("languages", language)
+        }
+
+        query.get()
+            .addOnSuccessListener { result ->
+                val priests = result.mapNotNull { it.data }
+                onResult(priests)
+            }
+            .addOnFailureListener {
+                onResult(emptyList())
+            }
+    }
 }

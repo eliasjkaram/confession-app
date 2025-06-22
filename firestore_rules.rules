@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to check if user is an admin
+    function isAdmin(userId) {
+      return exists(/databases/$(database)/documents/admins/$(userId));
+    }
+
+    // USER profiles
+    match /users/{userId} {
+      // Allow user to read and write their own profile.
+      // Admins can read any profile.
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin(request.auth.uid));
+      // User can create their own profile.
+      // User can update their own profile (specific fields might need more granular control).
+      // Priest can update 'isAvailableForConfession', 'languages'.
+      // Admin/backend can update 'isPriestVerified', 'verificationStatus'.
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      // Add specific field validation for updates if needed, e.g.
+      // allow update: if request.auth != null && request.auth.uid == userId &&
+      //                   (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'isAvailableForConfession', 'languages', 'lastVerificationRequestId', 'verificationStatus'])) &&
+      //                   (request.resource.data.isAvailableForConfession is bool || !request.resource.data.keys().hasAny(['isAvailableForConfession'])) &&
+      //                   (request.resource.data.languages is list || !request.resource.data.keys().hasAny(['languages']));
+      // isPriestVerified should only be updatable by an admin or backend process.
+      // allow update (isPriestVerified): if isAdmin(request.auth.uid); // This needs to be part of the general update rule or handled by backend
+    }
+
+    // DONATIONS
+    match /donations/{donationId} {
+      // User can create their own donations.
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      // User can read their own donations.
+      // Admins can read all donations.
+      allow read: if request.auth != null && (resource.data.uid == request.auth.uid || isAdmin(request.auth.uid));
+      // No updates or deletes by client for now.
+      allow update, delete: if false;
+    }
+
+    // VERIFICATION REQUESTS
+    match /verificationRequests/{requestId} {
+      // Priest can create their own verification request.
+      allow create: if request.auth != null && request.resource.data.priestId == request.auth.uid;
+      // Priest can read their own request.
+      // Admins can read all requests.
+      allow read: if request.auth != null && (resource.data.priestId == request.auth.uid || isAdmin(request.auth.uid));
+      // Only admins or backend can update status (e.g., to 'approved' or 'rejected').
+      allow update: if isAdmin(request.auth.uid);
+      // No deletes by client.
+      allow delete: if false;
+    }
+
+    // ADMINS collection (defines who is an admin)
+    // Typically, this collection is managed manually or by a trusted backend process.
+    match /admins/{adminId} {
+      allow read: if request.auth != null && isAdmin(request.auth.uid); // Admins can see who other admins are
+      allow write: if false; // Prevent client-side modification of admin list
+    }
+  }
+}
