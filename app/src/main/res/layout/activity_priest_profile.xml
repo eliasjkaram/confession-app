@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    tools:context=".ui.PriestProfileActivity"> // Assuming a future PriestProfileActivity
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Manage Your Languages"
+        android:textSize="20sp"
+        android:layout_marginBottom="16dp"/>
+
+    <EditText
+        android:id="@+id/language_edit_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Enter language"
+        android:inputType="textCapWords"
+        android:layout_marginBottom="8dp"/>
+
+    <Button
+        android:id="@+id/add_language_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Add Language"
+        android:layout_marginBottom="16dp"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Your Languages:"
+        android:textSize="16sp"
+        android:layout_marginBottom="8dp"/>
+
+    <com.google.android.material.chip.ChipGroup
+        android:id="@+id/languages_chip_group"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:chipSpacing="8dp"/>
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <Button
+        android:id="@+id/save_profile_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Save Changes"/>
+
+</LinearLayout>

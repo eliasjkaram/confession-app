@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.confessionapp">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ConfessionApp"> {/* Assuming a base theme name */}
+
+        {/* It's good practice to have a main launcher activity.
+            If one already exists, its declaration should be here.
+            For now, I'm not adding one as I don't know which activity is the entry point.
+            Example:
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        */}
+
+        <activity
+            android:name=".ui.PriestProfileActivity"
+            android:label="Priest Profile"
+            android:exported="false"> {/* Set exported based on whether it can be launched by other apps */}
+            {/* If this activity can be an entry point or deep linked, add intent-filters here */}
+        </activity>
+
+        <activity
+            android:name=".ui.ConfessorDashboardActivity"
+            android:label="Confessor Dashboard"
+            android:exported="false"> {/* Adjust exported as needed, e.g., true if it's a main screen */}
+            {/* If this is a main activity, you might want an intent filter:
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            */}
+        </activity>
+
+        {/* Other activities, services, receivers would be declared here */}
+
+    </application>
+
+</manifest>
