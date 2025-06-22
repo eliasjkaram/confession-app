@@ -59,4 +59,55 @@ class SignalingRepository(private val dbRef: DatabaseReference) {
        }
        childEventListener = null
     }
+
+    // --- Invitation Methods ---
+    // dbRef here is assumed to be the root of "confession_rooms" or a similar base path.
+    // For invitations, we need a path like "/invitations/{priestId}/{invitationId}"
+
+    fun sendInvitation(priestId: String, invitation: com.example.confessionapp.data.CallInvitation, onResult: (Boolean) -> Unit) {
+        // Assuming dbRef is a general Firebase Database root reference.
+        // If dbRef is specific (e.g., to "confession_rooms"), adjust pathing or use FirebaseDatabase.getInstance().getReference(...)
+        val invitationsRef = FirebaseDatabase.getInstance().getReference("invitations")
+        invitationsRef.child(priestId).child(invitation.invitationId).setValue(invitation)
+            .addOnSuccessListener { onResult(true) }
+            .addOnFailureListener { onResult(false) }
+    }
+
+    private var invitationStatusListener: com.google.firebase.database.ValueEventListener? = null
+    private var invitationRef: DatabaseReference? = null
+
+    fun listenToInvitationStatus(priestId: String, invitationId: String, onStatusChange: (com.example.confessionapp.data.CallInvitation?) -> Unit) {
+        removeInvitationStatusListener() // Clean up previous listener
+
+        invitationRef = FirebaseDatabase.getInstance().getReference("invitations").child(priestId).child(invitationId)
+        invitationStatusListener = object : com.google.firebase.database.ValueEventListener {
+            override fun onDataChange(snapshot: com.google.firebase.database.DataSnapshot) {
+                val invitation = snapshot.getValue(com.example.confessionapp.data.CallInvitation::class.java)
+                onStatusChange(invitation)
+            }
+
+            override fun onCancelled(error: com.google.firebase.database.DatabaseError) {
+                // Handle error
+                onStatusChange(null) // Indicate error or listener cancellation
+            }
+        }
+        invitationRef?.addValueEventListener(invitationStatusListener!!)
+    }
+
+    fun removeInvitationStatusListener() {
+        invitationStatusListener?.let { listener ->
+            invitationRef?.removeEventListener(listener)
+        }
+        invitationStatusListener = null
+        invitationRef = null
+    }
+
+     fun updateInvitationStatus(priestId: String, invitationId: String, newStatus: String, onResult: (Boolean) -> Unit) {
+        val updates = mapOf("status" to newStatus, "priestRespondedTimestamp" to System.currentTimeMillis())
+        FirebaseDatabase.getInstance().getReference("invitations")
+            .child(priestId).child(invitationId)
+            .updateChildren(updates)
+            .addOnSuccessListener { onResult(true) }
+            .addOnFailureListener { onResult(false) }
+    }
 }

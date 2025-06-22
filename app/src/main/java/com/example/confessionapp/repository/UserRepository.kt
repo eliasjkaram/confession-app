@@ -46,7 +46,14 @@ class UserRepository(private val firestore: FirebaseFirestore) {
         firestore.collection("users")
             .whereEqualTo("isPriestVerified", true)
             .whereEqualTo("isAvailableForConfession", true)
-            .get()
+            // .get() // Original query without language filter
+
+        var query = baseQuery
+        if (!language.isNullOrBlank() && language != "Any") { // "Any" means no language filter
+            query = query.whereArrayContains("languages", language)
+        }
+
+        query.get()
             .addOnSuccessListener { result ->
                 val priests = result.mapNotNull { it.data }
                 onResult(priests)

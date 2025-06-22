@@ -1,0 +1,54 @@
+{
+  "rules": {
+    // Default deny all access unless explicitly allowed
+    ".read": false,
+    ".write": false,
+
+    "confession_rooms": {
+      "$roomId": {
+        // Only authenticated users who are part of this room can read/write.
+        // This requires knowing who the participants are. Let's assume for now
+        // that if a user knows the roomId, they are a participant.
+        // A more secure way would be to list participants in the room object itself.
+        // For simplicity, we'll allow authenticated users to access a room they know the ID of.
+        // This is a simplification; real-world might need explicit participant lists.
+
+        "signals": {
+          // Anyone authenticated can write signals (offers, answers, candidates) to a room.
+          // Reading signals might be restricted to participants if participant list existed.
+          ".read": "auth != null",
+          ".write": "auth != null",
+          "$signalId": {
+            // Validate signal structure if needed (e.g., presence of 'type')
+            // ".validate": "newData.hasChildren(['type'])"
+          }
+        },
+        "chat": {
+          ".read": "auth != null", // All participants can read chat
+          "$messageId": {
+            ".write": "auth != null && newData.child('senderId').val() === auth.uid", // Only sender can write their message
+            ".validate": "newData.hasChildren(['messageId', 'senderId', 'text', 'timestamp']) && newData.child('messageId').isString() && newData.child('senderId').isString() && newData.child('text').isString() && newData.child('timestamp').isNumber()"
+          }
+        }
+      }
+    },
+
+    "invitations": {
+      "$priestId": {
+        // Priest can read all their invitations.
+        ".read": "auth != null && auth.uid === $priestId",
+        "$invitationId": {
+          // Confessor (auth.uid === newData.child('confessorId').val()) can write a new invitation.
+          // Priest (auth.uid === $priestId) can update status of an invitation.
+          // Confessor can update status to EXPIRED/CANCELLED.
+          ".write": "auth != null && ( (newData.exists() && !data.exists() && newData.child('confessorId').val() === auth.uid && newData.child('priestId').val() === $priestId) || (data.exists() && newData.exists() && ( (auth.uid === $priestId && (newData.child('status').val() === 'ACCEPTED' || newData.child('status').val() === 'REJECTED') ) || (auth.uid === data.child('confessorId').val() && (newData.child('status').val() === 'EXPIRED' || newData.child('status').val() === 'CANCELLED') ) ) ) )",
+          // Only priest can read their specific invitation details once created.
+          // Confessor might need to read status to see if it's accepted/rejected.
+          ".read": "auth != null && (auth.uid === $priestId || auth.uid === data.child('confessorId').val())",
+          ".validate": "newData.hasChildren(['invitationId', 'roomId', 'confessorId', 'priestId', 'status', 'timestamp']) && newData.child('priestId').val() === $priestId"
+          // Add validation for status transitions if needed (e.g., PENDING -> ACCEPTED/REJECTED only)
+        }
+      }
+    }
+  }
+}

@@ -94,8 +94,19 @@ class ConfessionActivity : AppCompatActivity() {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 initializeCall()
             } else {
-                Toast.makeText(this, "Audio permission is required for confession.", Toast.LENGTH_LONG).show()
-                finish() // Or handle gracefully
+                // Permission denied
+                AlertDialog.Builder(this)
+                    .setTitle("Permission Denied")
+                    .setMessage("Audio permission is required to start a confession. Please grant the permission to continue. You can also grant it from app settings.")
+                    .setPositiveButton("Retry") { _, _ ->
+                        requestAudioPermission()
+                    }
+                    .setNegativeButton("Cancel") { dialog, _ ->
+                        dialog.dismiss()
+                        finish() // Close activity if user cancels
+                    }
+                    .setCancelable(false)
+                    .show()
             }
         }
     }

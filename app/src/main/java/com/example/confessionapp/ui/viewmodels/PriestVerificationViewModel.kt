@@ -1,21 +1,24 @@
 package com.example.confessionapp.ui.viewmodels
 
+// Imports for streamlined ViewModel
 import android.net.Uri
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.confessionapp.repository.UserRepository
+import com.example.confessionapp.repository.UserRepository // Still needed for setUserProfile for verificationStatus
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-data class VerificationStatus(
+// VerificationStatus data class can remain here or be moved to a common 'data' package if shared
+// For now, keeping it here as it's primarily used by this ViewModel and its Activity.
+data class VerificationUploadStatus( // Renamed to be more specific
     val isSuccess: Boolean,
     val message: String,
-    val isVerificationPending: Boolean = false
+    val isVerificationPending: Boolean = false // Indicates if submission resulted in 'pending'
 )
 
 class PriestVerificationViewModel : ViewModel() {
@@ -24,146 +27,77 @@ class PriestVerificationViewModel : ViewModel() {
     private val firebaseAuth = FirebaseAuth.getInstance()
     private val storage = FirebaseStorage.getInstance()
 
-    private val _uploadResult = MutableLiveData<VerificationStatus>()
-    val uploadResult: LiveData<VerificationStatus> = _uploadResult
+    private val _uploadResult = MutableLiveData<VerificationUploadStatus>()
+    val uploadResult: LiveData<VerificationUploadStatus> = _uploadResult
 
     private val _isLoading = MutableLiveData<Boolean>()
     val isLoading: LiveData<Boolean> = _isLoading
 
-    val documentTypes = listOf("Letter of Good Standing", "Certificate of Ordination", "Other") // Example types
+    // Document types can be exposed for the Spinner in PriestVerificationActivity
+    val documentTypes = listOf("Letter of Good Standing", "Certificate of Ordination", "Other")
 
     fun uploadVerificationDocument(uri: Uri, documentType: String, fileName: String) {
         _isLoading.value = true
         val priestId = firebaseAuth.currentUser?.uid ?: run {
-            _uploadResult.postValue(VerificationStatus(false, "User not authenticated."))
+            _uploadResult.postValue(VerificationUploadStatus(false, "User not authenticated."))
             _isLoading.postValue(false)
             return
         }
 
         val requestId = UUID.randomUUID().toString()
-        // Path based on Setup.md: /verification/{requestId}/{documentType}/{fileName}
-        val storageRef = storage.reference.child("verification/$requestId/$documentType/$fileName")
+        val storagePath = "verification/$requestId/$documentType/$fileName"
+        val storageRef = storage.reference.child(storagePath)
 
-        storageRef.putFile(uri)
+        val metadata = com.google.firebase.storage.StorageMetadata.Builder()
+            .setCustomMetadata("priestId", priestId)
+            .setCustomMetadata("requestId", requestId)
+            .setCustomMetadata("documentType", documentType)
+            .build()
+
+        storageRef.putFile(uri, metadata)
             .addOnSuccessListener {
-                // Document uploaded to Storage, now create/update verification request in Firestore
-                createVerificationRequest(priestId, requestId, documentType, fileName)
+                createVerificationRequestFirestore(priestId, requestId, documentType, fileName, storagePath)
             }
             .addOnFailureListener { exception ->
-                _uploadResult.postValue(VerificationStatus(false, "Upload failed: ${exception.message}"))
+                _uploadResult.postValue(VerificationUploadStatus(false, "Upload failed: ${exception.message}"))
                 _isLoading.postValue(false)
             }
     }
 
-    private fun createVerificationRequest(priestId: String, requestId: String, documentType: String, uploadedFileName: String) {
-        // This data structure for 'verificationRequests' collection needs to align with backend expectations.
-        // For now, storing basic info.
+    private fun createVerificationRequestFirestore(priestId: String, requestId: String, documentType: String, uploadedFileName: String, storagePath: String) {
         val requestData = hashMapOf(
             "priestId" to priestId,
             "requestId" to requestId,
             "documentType" to documentType,
             "uploadedFileName" to uploadedFileName,
-            "status" to "pending", // "pending", "approved", "rejected"
+            "storagePath" to storagePath,
+            "status" to "pending", // Default status upon submission
             "timestamp" to com.google.firebase.Timestamp.now()
-            // Backend might add storagePath: "verification/$requestId/$documentType/$uploadedFileName"
         )
 
         FirebaseFirestore.getInstance().collection("verificationRequests").document(requestId)
             .set(requestData)
             .addOnSuccessListener {
-                // Also update user's profile to indicate verification is pending
-                userRepository.setUserProfile(priestId, mapOf("verificationStatus" to "pending", "lastVerificationRequestId" to requestId), true) { success ->
+                // Update user's profile to indicate verification is now pending with this request ID
+                // Using a map that only updates specific fields related to verification submission.
+                val userProfileUpdate = mapOf(
+                    "verificationStatus" to "pending",
+                    "lastVerificationRequestId" to requestId
+                )
+                userRepository.setUserProfile(priestId, userProfileUpdate, true) { success -> // Assuming setUserProfile can handle partial updates if implemented that way
                     if (success) {
-                        _uploadResult.postValue(VerificationStatus(true, "Document uploaded and verification request submitted.", isVerificationPending = true))
+                        _uploadResult.postValue(VerificationUploadStatus(true, "Document uploaded and verification request submitted.", isVerificationPending = true))
                     } else {
-                        _uploadResult.postValue(VerificationStatus(false, "Failed to update user profile for verification status."))
+                        // Still a success for upload and request creation, but profile update failed.
+                        // This might need more nuanced error reporting.
+                        _uploadResult.postValue(VerificationUploadStatus(true, "Request submitted, but failed to update user profile status. Contact support if verification status doesn't update.", isVerificationPending = true))
                     }
                     _isLoading.postValue(false)
                 }
             }
             .addOnFailureListener { exception ->
-                _uploadResult.postValue(VerificationStatus(false, "Failed to create verification request: ${exception.message}"))
+                _uploadResult.postValue(VerificationUploadStatus(false, "Failed to create verification request in Firestore: ${exception.message}"))
                 _isLoading.postValue(false)
             }
-    }
-
-    private val _verificationStatus = MutableLiveData<Pair<Boolean, String?>>() // isVerified, statusString
-    val verificationStatus: LiveData<Pair<Boolean, String?>> = _verificationStatus
-
-    fun checkPriestVerificationStatus() {
-        _isLoading.value = true
-        val priestId = firebaseAuth.currentUser?.uid ?: run {
-            _verificationStatus.postValue(Pair(false, "Not Authenticated"))
-            _isLoading.postValue(false)
-            return
-        }
-
-        userRepository.getUserProfile(priestId) { profile ->
-            if (profile != null) {
-                val isVerified = profile["isPriestVerified"] as? Boolean ?: false
-                val currentStatus = profile["verificationStatus"] as? String // e.g., "pending", "approved", "rejected"
-                if (isVerified) {
-                    _verificationStatus.postValue(Pair(true, "Verified"))
-                } else {
-                    _verificationStatus.postValue(Pair(false, currentStatus ?: "Not Verified"))
-                }
-            } else {
-                _verificationStatus.postValue(Pair(false, "Profile not found"))
-            }
-            _isLoading.postValue(false)
-        }
-    }
-
-    private val _availabilityUpdateResult = MutableLiveData<Boolean>()
-    val availabilityUpdateResult: LiveData<Boolean> = _availabilityUpdateResult
-
-    fun updatePriestAvailability(isAvailable: Boolean) {
-        _isLoading.value = true
-        val priestId = firebaseAuth.currentUser?.uid ?: run {
-            _availabilityUpdateResult.postValue(false)
-            _isLoading.postValue(false)
-            return
-        }
-        userRepository.setPriestAvailability(priestId, isAvailable) { success ->
-            _availabilityUpdateResult.postValue(success)
-            if (success) {
-                // Refresh verification status which also contains availability info from user profile
-                checkPriestVerificationStatus()
-            }
-            _isLoading.postValue(false)
-        }
-    }
-
-    // To observe current availability status from the profile
-    val isAvailableForConfession = MutableLiveData<Boolean>()
-
-    // Modify checkPriestVerificationStatus to also update isAvailableForConfession
-    fun checkPriestVerificationStatus() { // Renamed for clarity, though it does more now
-        _isLoading.value = true
-        val priestId = firebaseAuth.currentUser?.uid ?: run {
-            _verificationStatus.postValue(Pair(false, "Not Authenticated"))
-            isAvailableForConfession.postValue(false)
-            _isLoading.postValue(false)
-            return
-        }
-
-        userRepository.getUserProfile(priestId) { profile ->
-            if (profile != null) {
-                val isVerified = profile["isPriestVerified"] as? Boolean ?: false
-                val currentStatus = profile["verificationStatus"] as? String
-                val available = profile["isAvailableForConfession"] as? Boolean ?: false
-                isAvailableForConfession.postValue(available)
-
-                if (isVerified) {
-                    _verificationStatus.postValue(Pair(true, "Verified"))
-                } else {
-                    _verificationStatus.postValue(Pair(false, currentStatus ?: "Not Verified"))
-                }
-            } else {
-                _verificationStatus.postValue(Pair(false, "Profile not found"))
-                isAvailableForConfession.postValue(false)
-            }
-            _isLoading.postValue(false)
-        }
     }
 }

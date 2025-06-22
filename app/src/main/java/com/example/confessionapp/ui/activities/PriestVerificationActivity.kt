@@ -13,6 +13,8 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import com.example.confessionapp.databinding.ActivityPriestVerificationBinding
 import com.example.confessionapp.ui.viewmodels.PriestVerificationViewModel
+// Renamed data class, ensure this is correct if it was moved/renamed globally
+import com.example.confessionapp.ui.viewmodels.VerificationUploadStatus
 import com.example.confessionapp.R
 
 class PriestVerificationActivity : AppCompatActivity() {
