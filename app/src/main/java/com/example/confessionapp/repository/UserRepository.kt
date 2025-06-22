@@ -11,32 +11,33 @@ class UserRepository(private val firestore: FirebaseFirestore) {
             .addOnSuccessListener { document ->
                 onResult(document.data)
             }
-            .addOnFailureListener {
-                onResult(null)
+            .addOnFailureListener { exception -> // Pass exception
+                onResult(null) // Existing behavior, but ideally caller knows about error
             }
     }
 
-    fun setUserProfile(uid: String, profile: Map<String, Any>, onResult: (Boolean) -> Unit) {
+    fun setUserProfile(uid: String, profile: Map<String, Any>, onResult: (success: Boolean, exception: Exception?) -> Unit) {
         firestore.collection("users").document(uid).set(profile)
             .addOnSuccessListener {
-                onResult(true)
+                onResult(true, null)
             }
-            .addOnFailureListener {
-                onResult(false)
+            .addOnFailureListener { exception ->
+                onResult(false, exception)
             }
     }
 
-    fun checkPriestVerification(uid: String, onResult: (Boolean) -> Unit) {
+    fun checkPriestVerification(uid: String, onResult: (isVerified: Boolean, exception: Exception?) -> Unit) {
         firestore.collection("users").document(uid).get()
             .addOnSuccessListener { document ->
                 val isVerified = document.getBoolean("isPriestVerified") ?: false
-                onResult(isVerified)
+                onResult(isVerified, null)
             }
-            .addOnFailureListener {
-                onResult(false)
+            .addOnFailureListener { exception ->
+                onResult(false, exception)
             }
     }
 
+    // getVerifiedPriests already returns Result<T> which includes exceptions, so it's fine.
     fun getVerifiedPriests(language: String? = null, onResult: (Result<List<PriestUser>>) -> Unit) {
         var query: Query = firestore.collection("users").whereEqualTo("isPriestVerified", true)
 
@@ -64,10 +65,31 @@ class UserRepository(private val firestore: FirebaseFirestore) {
                     } catch (e: Exception) {
                         // Log error or handle individual document parsing errors
                         // For now, we'll skip problematic documents
-                        // Consider how to report this, e.g., logging to Crashlytics
+                        // Consider how to report this, e.g., logging to Crashlytics or a default PriestUser
+                        // For example: Log.e("UserRepository", "Error parsing priest document ${document.id}", e)
                     }
                 }
                 onResult(Result.success(priestList))
+            }
+            .addOnFailureListener { exception ->
+                // Log.e("UserRepository", "Error fetching verified priests", exception)
+                onResult(Result.failure(exception))
+            }
+    }
+
+    fun getSupportedLanguages(onResult: (Result<List<String>>) -> Unit) {
+        firestore.collection("app_config").document("languages").get()
+            .addOnSuccessListener { document ->
+                if (document != null && document.exists()) {
+                    val languages = document.get("supported_languages") as? List<String>
+                    if (languages != null) {
+                        onResult(Result.success(languages.sorted()))
+                    } else {
+                        onResult(Result.failure(Exception("supported_languages field is missing or not a list")))
+                    }
+                } else {
+                    onResult(Result.failure(Exception("Languages config document not found")))
+                }
             }
             .addOnFailureListener { exception ->
                 onResult(Result.failure(exception))

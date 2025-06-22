@@ -21,11 +21,25 @@
         android:layout_marginBottom="16dp"
         android:minHeight="48dp"/>
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/priests_recycler_view"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        tools:listitem="@layout/item_priest_card"/>
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/priests_recycler_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            tools:listitem="@layout/item_priest_card"/>
+
+        <ProgressBar
+            android:id="@+id/dashboard_progress_bar"
+            style="?android:attr/progressBarStyleLarge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:visibility="gone"
+            tools:visibility="visible"/>
+    </FrameLayout>
 
 </LinearLayout>

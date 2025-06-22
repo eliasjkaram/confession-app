@@ -1,27 +1,39 @@
 package com.example.confessionapp.ui
 
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ProgressBar
 import android.widget.Toast
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Observer
+import com.example.confessionapp.ConfessionApplication
 import com.example.confessionapp.R
 import com.example.confessionapp.repository.UserRepository
+import com.example.confessionapp.viewmodel.AuthViewModel
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 
 class PriestProfileActivity : AppCompatActivity() {
+
+    private companion object {
+        private const val TAG = "PriestProfileActivity"
+    }
 
     private lateinit var languageEditText: EditText
     private lateinit var addLanguageButton: Button
     private lateinit var languagesChipGroup: ChipGroup
     private lateinit var saveProfileButton: Button
+    private lateinit var progressBar: ProgressBar
 
     private lateinit var userRepository: UserRepository
-    private var currentUserUid: String? = null
+    private var currentUserUid: String? = null // This will be set by observing AuthViewModel
+    private val authViewModel: AuthViewModel by viewModels()
 
     private val currentLanguages = mutableSetOf<String>()
 
@@ -33,21 +45,12 @@ class PriestProfileActivity : AppCompatActivity() {
         addLanguageButton = findViewById(R.id.add_language_button)
         languagesChipGroup = findViewById(R.id.languages_chip_group)
         saveProfileButton = findViewById(R.id.save_profile_button)
+        progressBar = findViewById(R.id.profile_progress_bar)
 
-        // Initialize UserRepository
-        // In a real app, you might use dependency injection (e.g., Hilt)
-        userRepository = UserRepository(FirebaseFirestore.getInstance())
-        currentUserUid = FirebaseAuth.getInstance().currentUser?.uid
+        // Initialize UserRepository from Application class
+        userRepository = (application as ConfessionApplication).userRepository
 
-        if (currentUserUid == null) {
-            Toast.makeText(this, "User not logged in. Cannot load profile.", Toast.LENGTH_LONG).show()
-            // Potentially finish activity or redirect to login
-            // For now, disable save button if no user
-            saveProfileButton.isEnabled = false
-            addLanguageButton.isEnabled = false
-        } else {
-            loadPriestProfile()
-        }
+        observeAuthViewModel()
 
         addLanguageButton.setOnClickListener {
             val language = languageEditText.text.toString().trim()
@@ -64,28 +67,60 @@ class PriestProfileActivity : AppCompatActivity() {
         }
     }
 
+    private fun observeAuthViewModel() {
+        authViewModel.currentUserId.observe(this, Observer { uid ->
+            this.currentUserUid = uid
+            if (uid != null) {
+                Log.i(TAG, "User logged in with UID: $uid. Loading profile.")
+                // Enable UI elements that depend on logged-in state if they were disabled
+                languageEditText.isEnabled = true // Ensure it's enabled if it was disabled
+                // addLanguageButton and saveProfileButton are handled by setLoadingState
+                loadPriestProfile()
+            } else {
+                Log.w(TAG, "User logged out or not authenticated. Disabling profile features.")
+                Toast.makeText(this, "User not logged in. Profile features disabled.", Toast.LENGTH_LONG).show()
+                setLoadingState(false) // Ensure loading is off
+                saveProfileButton.isEnabled = false
+                addLanguageButton.isEnabled = false
+                languageEditText.isEnabled = false
+                currentLanguages.clear()
+                updateLanguagesChipGroup() // Clear displayed chips
+            }
+        })
+    }
+
     private fun loadPriestProfile() {
-        currentUserUid?.let { uid ->
+        if (currentUserUid == null) {
+            Log.w(TAG, "loadPriestProfile called but currentUserUid is null. Aborting.")
+            setLoadingState(false) // Ensure loading is off
+            // UI should already be disabled by observer if UID is null
+            return
+        }
+        setLoadingState(true)
+        currentUserUid?.let { uid -> // Re-check for safety, though observer should handle
             userRepository.getUserProfile(uid) { profileMap ->
+                setLoadingState(false)
                 if (profileMap != null) {
                     val languages = profileMap["languages"] as? List<String> ?: emptyList()
                     currentLanguages.clear()
                     currentLanguages.addAll(languages)
                     updateLanguagesChipGroup()
                 } else {
-                    Toast.makeText(this, "Failed to load profile", Toast.LENGTH_SHORT).show()
+                    Log.w(TAG, "Failed to load profile for UID: $uid. Profile map was null.")
+                    Toast.makeText(this, "Failed to load profile. Please try again.", Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
 
     private fun addLanguageToChipGroup(language: String, fromLoad: Boolean = false) {
-        if (currentLanguages.add(language.capitalize())) { // Add to set, ensure uniqueness and capitalize
-            if (!fromLoad) { // Only update chip group if not called during initial load
-                 updateLanguagesChipGroup()
+        val capitalizedLanguage = language.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+        if (currentLanguages.add(capitalizedLanguage)) {
+            if (!fromLoad) {
+                updateLanguagesChipGroup()
             }
         } else if (!fromLoad) {
-             Toast.makeText(this, "$language already added", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "'$capitalizedLanguage' already added.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -112,27 +147,47 @@ class PriestProfileActivity : AppCompatActivity() {
             // then update only the languages field, or merge.
             // For simplicity here, we create a new map with just languages,
             // assuming other profile fields are managed elsewhere or this is a specific language settings page.
-            // A more robust approach would be to fetch the full profile map first.
-
-            userRepository.getUserProfile(uid) { existingProfile ->
+            // A more robust approach would be to fetch the full profile map first,
+            // but for saving languages specifically, this might be okay if it's the only thing this screen manages.
+            // If we fetch full profile first, ensure loading state covers that too.
+            setLoadingState(true)
+            userRepository.getUserProfile(uid) { existingProfile -> // Fetch existing to merge, or just save new map
                 val profileUpdate: MutableMap<String, Any> = existingProfile?.toMutableMap() ?: mutableMapOf()
                 profileUpdate["languages"] = currentLanguages.toList()
 
-                // Add other fields if this activity is responsible for them
-                // For example, if name can be edited here:
-                // profileUpdate["name"] = nameEditText.text.toString()
-                // Ensure these fields exist in your Firestore structure and PriestUser model
-
-                userRepository.setUserProfile(uid, profileUpdate) { success ->
+                userRepository.setUserProfile(uid, profileUpdate) { success, exception ->
+                    setLoadingState(false)
                     if (success) {
                         Toast.makeText(this, "Profile updated successfully!", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(this, "Failed to update profile.", Toast.LENGTH_SHORT).show()
+                        Log.e(TAG, "Failed to update profile for UID: $uid", exception)
+                        val errorMsg = when (exception?.code) {
+                            FirebaseFirestoreException.Code.UNAVAILABLE -> "Network error. Please check connection."
+                            FirebaseFirestoreException.Code.PERMISSION_DENIED -> "Permission denied."
+                            else -> "Failed to update profile. Please try again."
+                        }
+                        Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
                     }
                 }
             }
         } ?: run {
+            setLoadingState(false) // Ensure loading is stopped
+            Log.w(TAG, "Save attempt failed: User not logged in.")
             Toast.makeText(this, "User not logged in. Cannot save profile.", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun setLoadingState(isLoading: Boolean) {
+        progressBar.visibility = if (isLoading) View.VISIBLE else View.GONE
+        languageEditText.isEnabled = !isLoading
+        addLanguageButton.isEnabled = !isLoading
+        saveProfileButton.isEnabled = !isLoading
+        // Consider disabling chip group interaction too, or cover with overlay
+        // Only enable add/save if user is logged in (handled by currentUserUid check mostly)
+        val isLoggedIn = currentUserUid != null
+        languageEditText.isEnabled = !isLoading && isLoggedIn
+        addLanguageButton.isEnabled = !isLoading && isLoggedIn
+        saveProfileButton.isEnabled = !isLoading && isLoggedIn
+        languagesChipGroup.isEnabled = !isLoading && isLoggedIn // May not prevent clicks on individual chips' close icons
     }
 }
