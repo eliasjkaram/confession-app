@@ -388,18 +388,35 @@ This comprehensive guide will walk you through all the steps needed to set up an
    ```bash
    npm install express cors helmet morgan firebase-admin multer uuid
    ```
+   (Ensure your `package.json` reflects these dependencies. If you created one with `npm init -y` and then installed these, it should be correct. Otherwise, manually create/update `package.json`.)
+
 4. Set up Firebase Admin SDK:
    - Go to Firebase Console > Project Settings > Service Accounts
-   - Generate a new private key
-   - Save the JSON file to your server as `firebase-admin-key.json`
-5. Update the server code to use the service account:
+   - Generate a new private key (Node.js option).
+   - Save the JSON file to your server, typically in the root of your API project, as `firebase-admin-key.json` (or a name of your choice, but ensure it's gitignored if in a public repo).
+5. Update the server code (`verification_api_server.js`) to initialize Firebase Admin SDK correctly:
    ```javascript
    // Initialize Firebase Admin SDK
-   admin.initializeApp({
-     credential: admin.credential.cert('./firebase-admin-key.json'),
-     storageBucket: 'your-project-id.appspot.com'
-   });
+   const admin = require('firebase-admin');
+   const SERVICE_ACCOUNT_KEY_PATH = './firebase-admin-key.json'; // Or your chosen path
+   const FIREBASE_STORAGE_BUCKET = 'your-project-id.appspot.com'; // **Replace with your actual bucket URL**
+
+   try {
+     admin.initializeApp({
+       credential: admin.credential.cert(SERVICE_ACCOUNT_KEY_PATH),
+       storageBucket: FIREBASE_STORAGE_BUCKET
+     });
+     console.log('Firebase Admin SDK initialized successfully.');
+   } catch (error) {
+     console.error('Error initializing Firebase Admin SDK:', error);
+     process.exit(1);
+   }
    ```
+   The API server implements the following key endpoints:
+    - `POST /verify-priest`: Handles submission of priest verification details and documents. Documents are uploaded to Firebase Storage, and a request record is created in Firestore.
+    - `GET /verification-status/:requestId`: Allows checking the status of a submitted verification request.
+    - `PUT /admin/verify-request/:requestId`: (Admin functionality) Allows updating the status of a request (e.g., to 'approved' or 'rejected'). Requires proper admin authentication in production.
+
 6. Start the server with PM2:
    ```bash
    pm2 start verification_api_server.js --name verification-api
@@ -476,11 +493,11 @@ This comprehensive guide will walk you through all the steps needed to set up an
 ### 5.6 Update App Configuration
 
 1. Open your API client code in the app
-2. Update the base URL to point to your deployed API:
+2. Update the base URL to point to your deployed API. The specific endpoints implemented are relative to this base URL (e.g., `BASE_URL + "verify-priest"`).
    ```kotlin
-   private const val BASE_URL = "https://api.yourapp.com/"
+   private const val BASE_URL = "https://api.yourapp.com/" // Example for VM/Nginx setup
    // or for Cloud Run
-   // private const val BASE_URL = "https://verification-api-xxxx-uc.a.run.app/"
+   // private const val BASE_URL = "https://verification-api-xxxx-uc.a.run.app/" // Example for Cloud Run
    ```
 
 ## 6. App Deployment Process
