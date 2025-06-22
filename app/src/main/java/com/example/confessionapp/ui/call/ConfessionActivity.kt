@@ -2,11 +2,12 @@ package com.example.confessionapp.ui.call
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-// Temporarily commenting out R.layout.activity_confession until layout files are handled.
-// import com.example.confessionapp.R
 import android.os.Bundle
 import android.util.Log
+import android.widget.Button
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.example.confessionapp.R // Import R
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 
@@ -15,6 +16,10 @@ class ConfessionActivity : AppCompatActivity() {
     private lateinit var auth: FirebaseAuth
     private lateinit var database: FirebaseDatabase
 
+    // UI Elements
+    private lateinit var roomIdTextView: TextView
+    private lateinit var endCallButton: Button
+
     private var roomId: String? = null
     private var invitationId: String? = null
     private var priestId: String? = null
@@ -22,10 +27,13 @@ class ConfessionActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // setContentView(R.layout.activity_confession) // TODO: Add layout with roomId display and End Call button
+        setContentView(R.layout.activity_confession)
 
         auth = FirebaseAuth.getInstance()
         database = FirebaseDatabase.getInstance()
+
+        roomIdTextView = findViewById(R.id.roomIdTextView)
+        endCallButton = findViewById(R.id.endCallButton)
 
         roomId = intent.getStringExtra("roomId")
         invitationId = intent.getStringExtra("invitationId")
@@ -33,6 +41,8 @@ class ConfessionActivity : AppCompatActivity() {
 
         if (roomId == null || invitationId == null || priestId == null) {
             Log.e("ConfessionActivity", "Missing critical call information in Intent. Finishing activity.")
+            roomIdTextView.text = "Error: Missing call info."
+            endCallButton.isEnabled = false // Or finish() directly as below
             finish()
             return
         }
@@ -40,23 +50,24 @@ class ConfessionActivity : AppCompatActivity() {
         val currentUser = auth.currentUser
         if (currentUser == null) {
             Log.e("ConfessionActivity", "User not signed in. Finishing activity.")
-            // This shouldn't happen if previous activities ensure sign-in
+            roomIdTextView.text = "Error: User not signed in."
             finish()
             return
         }
         isPriest = currentUser.uid == priestId
 
         Log.d("ConfessionActivity", "Launched. Room: $roomId, Invitation: $invitationId, Priest: $priestId, IsPriest: $isPriest")
-        println("ConfessionActivity: In call for room $roomId. Role: ${if (isPriest) "Priest" else "Confessor"}")
-        // TODO: Display Room ID and other call info in UI
+        roomIdTextView.text = "Room ID: $roomId\nRole: ${if (isPriest) "Priest" else "Confessor"}"
+
         // TODO: Initialize WebRTC connection here using the roomId
 
         if (isPriest) {
             markInvitationAsAnswered()
         }
 
-        // Placeholder for End Call Button
-        // endCallButton.setOnClickListener { endCall() }
+        endCallButton.setOnClickListener {
+            endCall()
+        }
     }
 
     private fun markInvitationAsAnswered() {

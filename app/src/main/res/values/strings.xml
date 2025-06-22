@@ -1,0 +1,49 @@
+<resources>
+    <string name="app_name">ConfessionApp</string>
+
+    <!-- ConfessorHomeActivity -->
+    <string name="label_enter_priest_id">Enter Priest ID to Call:</string>
+    <string name="hint_priest_id">Priest User ID</string>
+    <string name="button_call_priest">Call Priest</string>
+    <string name="button_cancel_call">Cancel Call</string>
+    <string name="status_idle">Status: Idle</string>
+    <string name="status_signing_in">Signing in...</string>
+    <string name="status_ready_to_call">Ready to call.</string>
+    <string name="status_signed_in_ready">Signed in anonymously. Ready to call.</string>
+    <string name="status_signin_failed">Anonymous sign-in failed. Please restart.</string>
+    <string name="status_please_enter_priest_id">Please enter a Priest ID.</string>
+    <string name="status_error_not_signed_in">Error: Not signed in.</string>
+    <string name="status_error_create_invitation">Error: Could not create invitation.</string>
+    <string name="status_calling_priest">Calling priest...</string>
+    <string name="status_waiting_for_priest">Waiting for priest...</string>
+    <string name="status_error_sending_invitation">Error sending invitation. Try again.</string>
+    <string name="status_priest_accepted">Priest accepted! Joining call...</string>
+    <string name="status_priest_rejected">Priest rejected your call.</string>
+    <string name="status_priest_missed">Priest missed your call.</string>
+    <string name="status_priest_answered">Priest answered. In call...</string>
+    <string name="status_call_cancelled">Call cancelled.</string>
+    <string name="status_invitation_deleted">Call ended or invitation removed.</string>
+    <string name="status_error_listening">Error listening to call status.</string>
+    <string name="status_cancelling_call">Cancelling call...</string>
+    <string name="status_no_active_call_to_cancel">No active call to cancel.</string>
+    <string name="status_error_cancelling_call">Error cancelling call. Try again.</string>
+
+
+    <!-- PriestDashboardActivity -->
+    <string name="label_priest_dashboard">Priest Dashboard</string>
+    <string name="label_incoming_call_from">Incoming Call From:</string>
+    <string name="button_accept">Accept</string>
+    <string name="button_reject">Reject</string>
+    <string name="status_no_active_calls">No active calls or invitations.</string>
+    <string name="status_error_priest_not_signed_in">Error: Priest not signed in. Please login.</string>
+
+    <!-- ConfessionActivity -->
+    <string name="label_in_confession_call">In Confession Call</string>
+    <string name="button_end_call">End Call</string>
+    <string name="label_room_id_prefix">Room ID:&#160;</string> <!-- &#160; is a non-breaking space -->
+    <string name="label_role_prefix">Role:&#160;</string>
+    <string name="error_missing_call_info">Error: Missing call info.</string>
+    <string name="error_user_not_signed_in_call">Error: User not signed in.</string>
+    <string name="placeholder_video_area">Video Call Area (Placeholder)</string>
+
+</resources>

@@ -2,11 +2,16 @@ package com.example.confessionapp.ui.priest
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-// Temporarily commenting out R.layout.activity_priest_dashboard until layout files are handled.
-// import com.example.confessionapp.R
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import android.view.View
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.example.confessionapp.R
+import com.example.confessionapp.ui.call.ConfessionActivity
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.database.*
@@ -29,28 +34,75 @@ class PriestDashboardActivity : AppCompatActivity() {
     private var invitationsRef: DatabaseReference? = null
     private var invitationListener: ChildEventListener? = null
 
-    // Store active invitations shown to the priest to avoid reprocessing
+    // UI Elements
+    private lateinit var incomingCallLayout: LinearLayout
+    private lateinit var confessorNameTextView: TextView
+    private lateinit var acceptCallButton: Button
+    private lateinit var rejectCallButton: Button
+    private lateinit var noActiveCallTextView: TextView
+
+    // Store active invitations shown to the priest to avoid reprocessing / managing single display
     private val activeInvitations = mutableMapOf<String, CallInvitation>()
+    private var currentlyDisplayedInvitationId: String? = null
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // setContentView(R.layout.activity_priest_dashboard)
+        setContentView(R.layout.activity_priest_dashboard)
 
         auth = FirebaseAuth.getInstance()
         database = FirebaseDatabase.getInstance()
         currentUser = auth.currentUser
 
+        incomingCallLayout = findViewById(R.id.incomingCallLayout)
+        confessorNameTextView = findViewById(R.id.confessorNameTextView)
+        acceptCallButton = findViewById(R.id.acceptCallButton)
+        rejectCallButton = findViewById(R.id.rejectCallButton)
+        noActiveCallTextView = findViewById(R.id.noActiveCallTextView)
+
         if (currentUser == null) {
             Log.e("PriestDashboardActivity", "Priest not signed in. Cannot listen for invitations.")
-            // In a real app, redirect to login screen
-            // For now, just return or show error
-            println("PriestDashboardActivity: Error - Priest not signed in.")
+            noActiveCallTextView.text = "Error: Priest not signed in. Please login."
+            incomingCallLayout.visibility = View.GONE
+            // Potentially finish() or redirect to login
             return
         }
 
-        println("PriestDashboardActivity Created for user: ${currentUser!!.uid}")
+        updateUiForIdleState() // Initial state
+        Log.d("PriestDashboardActivity", "Activity Created for user: ${currentUser!!.uid}")
         listenForIncomingInvitations()
     }
+
+    private fun updateUiForIdleState() {
+        incomingCallLayout.visibility = View.GONE
+        noActiveCallTextView.visibility = View.VISIBLE
+        currentlyDisplayedInvitationId = null
+    }
+
+    private fun displayInvitation(invitation: CallInvitation) {
+        if (currentlyDisplayedInvitationId != null && currentlyDisplayedInvitationId != invitation.invitationId) {
+            Log.d("PriestDashboardActivity", "Already displaying an invitation. New invitation ${invitation.invitationId} queued (conceptually).")
+            // In a real app, you might add to a queue or list. For now, only one shows.
+            // If another invitation is already displayed, don't overwrite it until it's handled.
+            // However, if the currently displayed one was cancelled/removed, this new one can take its place.
+            // The logic in onChildAdded and onChildChanged should handle this.
+            return // Or, if the current one is stale, replace it.
+        }
+
+        currentlyDisplayedInvitationId = invitation.invitationId
+        confessorNameTextView.text = invitation.confessorName ?: "Unknown Confessor"
+        incomingCallLayout.visibility = View.VISIBLE
+        noActiveCallTextView.visibility = View.GONE
+
+        acceptCallButton.setOnClickListener {
+            handleInvitationResponse(invitation.invitationId!!, invitation.roomId!!, true)
+        }
+        rejectCallButton.setOnClickListener {
+            handleInvitationResponse(invitation.invitationId!!, invitation.roomId!!, false)
+        }
+        Log.d("PriestDashboardActivity", "Displaying invitation: ${invitation.invitationId}")
+    }
+
 
     private fun listenForIncomingInvitations() {
         val priestId = currentUser?.uid ?: return
@@ -59,39 +111,56 @@ class PriestDashboardActivity : AppCompatActivity() {
         invitationListener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
                 val invitation = snapshot.getValue(CallInvitation::class.java)
-                invitation?.invitationId = snapshot.key // Store the Firebase key as invitationId
+                invitation?.invitationId = snapshot.key
 
-                if (invitation != null && invitation.status == "pending" && !activeInvitations.containsKey(invitation.invitationId)) {
-                    activeInvitations[invitation.invitationId!!] = invitation
-                    Log.d("PriestDashboardActivity", "New pending invitation: ${invitation.invitationId} from ${invitation.confessorName} for room ${invitation.roomId}")
-                    // TODO: Display incoming call UI (dialog) with Accept/Reject options
-                    // Pass invitation.invitationId and invitation.roomId to the UI handler
-                    println("Incoming call from ${invitation.confessorName}! Room: ${invitation.roomId}. Invitation ID: ${invitation.invitationId}")
-                    println("Options: Accept / Reject (Conceptual)")
-                    // For now, let's simulate priest accepting immediately for testing flow
-                    // handleInvitationResponse(invitation.invitationId!!, invitation.roomId!!, true)
+                if (invitation != null && invitation.status == "pending") {
+                    activeInvitations[invitation.invitationId!!] = invitation // Track all pending
+                    Log.d("PriestDashboardActivity", "Pending invitation added: ${invitation.invitationId}")
+                    // If no call is currently displayed, show this one.
+                    if (currentlyDisplayedInvitationId == null) {
+                        displayInvitation(invitation)
+                    } else {
+                        Log.d("PriestDashboardActivity", "Another call already displayed. ${invitation.invitationId} is pending.")
+                    }
                 }
             }
 
             override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) {
-                val invitation = snapshot.getValue(CallInvitation::class.java)
-                invitation?.invitationId = snapshot.key
-                // If an active invitation is no longer pending (e.g., cancelled by confessor, accepted by this priest on another device)
-                if (invitation != null && invitation.status != "pending" && activeInvitations.containsKey(invitation.invitationId)) {
-                    Log.d("PriestDashboardActivity", "Invitation ${invitation.invitationId} status changed to ${invitation.status}. Removing from active.")
-                    activeInvitations.remove(invitation.invitationId)
-                    // TODO: Update UI - e.g., dismiss the incoming call dialog if it's for this invitation
-                    println("Invitation ${invitation.invitationId} is no longer pending (status: ${invitation.status}). UI should be updated.")
+                val changedInvitation = snapshot.getValue(CallInvitation::class.java)
+                changedInvitation?.invitationId = snapshot.key
+
+                if (changedInvitation == null || changedInvitation.invitationId == null) return
+
+                // Update local cache
+                activeInvitations[changedInvitation.invitationId!!] = changedInvitation
+
+                if (changedInvitation.invitationId == currentlyDisplayedInvitationId) {
+                    if (changedInvitation.status != "pending") {
+                        // The currently displayed invitation is no longer pending (e.g., accepted elsewhere, cancelled by confessor)
+                        Log.d("PriestDashboardActivity", "Displayed invitation ${changedInvitation.invitationId} status changed to ${changedInvitation.status}. Hiding it.")
+                        updateUiForIdleState()
+                        activeInvitations.remove(changedInvitation.invitationId) // Remove if handled
+                        // Try to display next pending invitation if any
+                        displayNextPendingInvitation()
+                    }
+                    // If status is still pending but other details changed, displayInvitation would re-render if called.
+                } else if (changedInvitation.status != "pending") {
+                    // A non-displayed invitation is no longer pending, remove from active list if it was there
+                    activeInvitations.remove(changedInvitation.invitationId)
                 }
             }
 
             override fun onChildRemoved(snapshot: DataSnapshot) {
-                val invitationId = snapshot.key
-                if (invitationId != null && activeInvitations.containsKey(invitationId)) {
-                    activeInvitations.remove(invitationId)
-                    Log.d("PriestDashboardActivity", "Invitation $invitationId removed. Updating UI.")
-                    // TODO: Update UI - dismiss incoming call dialog if it was for this invitation
-                     println("Invitation $invitationId was removed. UI should be updated.")
+                val removedInvitationId = snapshot.key
+                if (removedInvitationId == null) return
+
+                activeInvitations.remove(removedInvitationId)
+                Log.d("PriestDashboardActivity", "Invitation $removedInvitationId removed.")
+
+                if (removedInvitationId == currentlyDisplayedInvitationId) {
+                    updateUiForIdleState()
+                    // Try to display next pending invitation if any
+                    displayNextPendingInvitation()
                 }
             }
 
@@ -100,12 +169,22 @@ class PriestDashboardActivity : AppCompatActivity() {
                 Log.w("PriestDashboardActivity", "listenForIncomingInvitations:onCancelled", error.toException())
             }
         }
-        invitationsRef!!.addChildEventListener(invitationListener!!)
+        invitationsRef!!.orderByChild("timestamp").addChildEventListener(invitationListener!!) // Order by time
         Log.d("PriestDashboardActivity", "Started listening for invitations for priest: $priestId")
     }
 
-    // Placeholder for handling response (will be detailed in the next step)
-    // private fun handleInvitationResponse(invitationId: String, roomId: String, accepted: Boolean) { // Made public for now if called from dialog
+    private fun displayNextPendingInvitation() {
+        if (currentlyDisplayedInvitationId != null) return // Already showing one
+
+        val nextInvitation = activeInvitations.values
+            .filter { it.status == "pending" }
+            .minByOrNull { it.timestamp ?: Long.MAX_VALUE } // FIFO based on timestamp
+
+        nextInvitation?.let {
+            displayInvitation(it)
+        }
+    }
+
     fun handleInvitationResponse(invitationId: String, roomId: String, accepted: Boolean) {
         val priestId = currentUser?.uid ?: run {
             Log.e("PriestDashboardActivity", "Cannot handle response, priestId is null")
@@ -120,22 +199,23 @@ class PriestDashboardActivity : AppCompatActivity() {
                 Log.d("PriestDashboardActivity", "Invitation $invitationId status updated to $statusToSet")
                 activeInvitations.remove(invitationId) // Remove from active list as it's handled
 
+                if (invitationId == currentlyDisplayedInvitationId) {
+                    updateUiForIdleState() // Hide the current call UI
+                     // Attempt to show next pending call if any
+                    displayNextPendingInvitation()
+                }
+
                 if (accepted) {
-                    // Launch ConfessionActivity
-                    val intent = android.content.Intent(this, com.example.confessionapp.ui.call.ConfessionActivity::class.java)
+                    val intent = Intent(this, ConfessionActivity::class.java)
                     intent.putExtra("roomId", roomId)
                     intent.putExtra("invitationId", invitationId)
                     intent.putExtra("priestId", priestId)
                     startActivity(intent)
-                    println("Invitation accepted. Launching ConfessionActivity for room $roomId...")
-                } else {
-                    println("Invitation rejected. Invitation ID: $invitationId")
-                    // UI would be dismissed by the dialog/notification handler itself or by onChildChanged
                 }
             }
             .addOnFailureListener { e ->
                 Log.e("PriestDashboardActivity", "Failed to update invitation $invitationId status", e)
-                // Potentially re-add to activeInvitations or show error to allow retry? For now, just log.
+                // Potentially show error to priest. For now, UI might remain or get reset by listener.
             }
     }
 
@@ -146,8 +226,4 @@ class PriestDashboardActivity : AppCompatActivity() {
             Log.d("PriestDashboardActivity", "Removed invitation listener.")
         }
     }
-
-    // TODO: Implement actual UI for incoming call notification/dialog.
-    // TODO: Implement logic for priest accepting/rejecting via UI interaction.
-    // TODO: Handle scenarios like priest already in a call.
 }
