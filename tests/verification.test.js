@@ -158,23 +158,228 @@ describe('Health Check API - /health', () => {
   });
 });
 
-// Add more describe blocks for other endpoints like POST /verify-priest and PUT /admin/verify-request
-// Example for POST /verify-priest (conceptual, needs more setup for file uploads and storage mocks/emulators)
-// describe('POST /verify-priest', () => {
-//   it('should return 201 and request ID on successful submission', async () => {
-//      // Mock admin.storage().bucket().file().createWriteStream() to simulate successful upload
-//      // Mock admin.firestore().collection().doc().set() to simulate successful Firestore write
-//
-//      const response = await request(app)
-//        .post('/verify-priest')
-//        .field('priestAuthId', 'test-priest-uid')
-//        .field('priestName', 'Father Test')
-//        .field('diocese', 'Test Diocese')
-//        .attach('letterOfGoodStanding', Buffer.from('test data'), 'letter.pdf')
-//        .attach('priestIdPhoto', Buffer.from('image data'), 'photo.jpg');
-//
-//      expect(response.statusCode).toBe(201);
-//      expect(response.body).toHaveProperty('requestId');
-//      expect(response.body).toHaveProperty('status', 'pending');
-//   });
-// });
+describe('POST /verify-priest', () => {
+  beforeEach(() => {
+    // Clear relevant mocks before each test in this suite
+    admin.firestore().collection().doc().set.mockClear();
+    const mockStream = {
+      on: jest.fn((event, handler) => {
+        if (event === 'finish') handler(); // Simulate immediate finish
+        return { end: jest.fn() }; // Return an object with an 'end' method
+      }),
+      end: jest.fn(),
+    };
+    admin.storage().bucket().file().createWriteStream.mockReturnValue(mockStream);
+  });
+
+  it('should return 201 and request details on successful submission', async () => {
+    // Arrange
+    admin.firestore().collection().doc().set.mockResolvedValue({}); // Simulate successful Firestore write
+
+    // Act
+    const response = await request(app)
+      .post('/verify-priest')
+      .field('priestAuthId', 'test-uid-12345')
+      .field('priestName', 'Father Test')
+      .field('diocese', 'Diocese of Testing')
+      .field('email', 'father.test@example.com')
+      .attach('letterOfGoodStanding', Buffer.from('pdf content'), { filename: 'letter.pdf', contentType: 'application/pdf' })
+      .attach('priestIdPhoto', Buffer.from('jpg content'), { filename: 'photo.jpg', contentType: 'image/jpeg' });
+
+    // Assert
+    expect(response.statusCode).toBe(201);
+    expect(response.body).toHaveProperty('message', 'Verification request submitted successfully.');
+    expect(response.body).toHaveProperty('requestId');
+    expect(response.body).toHaveProperty('status', 'pending');
+
+    // Check if Firestore 'set' was called correctly
+    expect(admin.firestore().collection().doc().set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priestAuthId: 'test-uid-12345',
+        priestName: 'Father Test',
+        diocese: 'Diocese of Testing',
+        email: 'father.test@example.com',
+        status: 'pending',
+        filePaths: expect.objectContaining({
+          letterOfGoodStanding: expect.stringContaining('letter.pdf'),
+          priestIdPhoto: expect.stringContaining('photo.jpg'),
+        }),
+      })
+    );
+
+    // Check if storage methods were called (simplified check)
+    expect(admin.storage().bucket().file().createWriteStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('should return 400 if required fields (priestAuthId, priestName, diocese) are missing', async () => {
+    const testCases = [
+      { priestName: 'Test', diocese: 'Test Diocese' }, // Missing priestAuthId
+      { priestAuthId: 'uid', diocese: 'Test Diocese' }, // Missing priestName
+      { priestAuthId: 'uid', priestName: 'Test' },      // Missing diocese
+    ];
+
+    for (const body of testCases) {
+      const response = await request(app)
+        .post('/verify-priest')
+        .field(body) // Send partial body
+        .attach('letterOfGoodStanding', Buffer.from('pdf content'), 'letter.pdf')
+        .attach('priestIdPhoto', Buffer.from('jpg content'), 'photo.jpg');
+
+      expect(response.statusCode).toBe(400);
+      expect(response.body).toHaveProperty('error', 'Missing required fields: priestName, diocese, priestAuthId (Firebase UID).');
+    }
+  });
+
+  it('should return 400 if required document files are missing', async () => {
+    const response = await request(app)
+      .post('/verify-priest')
+      .field('priestAuthId', 'test-uid-12345')
+      .field('priestName', 'Father Test')
+      .field('diocese', 'Diocese of Testing');
+      // No files attached
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toHaveProperty('error', 'Missing required document files: letterOfGoodStanding and priestIdPhoto.');
+  });
+});
+
+describe('PUT /admin/verify-request/:requestId', () => {
+  const mockRequestId = 'test-request-id-admin';
+  const adminUserToken = { uid: 'admin-user-uid', admin: true }; // Decoded token for an admin
+  const regularUserToken = { uid: 'regular-user-uid', admin: false }; // Decoded token for a non-admin
+
+  beforeEach(() => {
+    admin.auth().verifyIdToken.mockReset();
+    admin.firestore().collection().doc().get.mockReset();
+    admin.firestore().collection().doc().update.mockReset();
+    admin.auth().setCustomUserClaims.mockReset();
+  });
+
+  // Admin Auth Tests
+  it('should return 401 if no auth token is provided', async () => {
+    const response = await request(app)
+      .put(`/admin/verify-request/${mockRequestId}`)
+      .send({ status: 'approved' });
+    expect(response.statusCode).toBe(401);
+    expect(response.body.error).toContain('No token provided');
+  });
+
+  it('should return 401 if the auth token is invalid or expired', async () => {
+    admin.auth().verifyIdToken.mockRejectedValue(new Error('Invalid token'));
+    const response = await request(app)
+      .put(`/admin/verify-request/${mockRequestId}`)
+      .set('Authorization', 'Bearer invalidtoken123')
+      .send({ status: 'approved' });
+    expect(response.statusCode).toBe(401);
+    expect(response.body.error).toContain('Invalid token');
+  });
+
+  it('should return 403 if the user is not an admin', async () => {
+    admin.auth().verifyIdToken.mockResolvedValue(regularUserToken);
+    const response = await request(app)
+      .put(`/admin/verify-request/${mockRequestId}`)
+      .set('Authorization', 'Bearer regulartoken456')
+      .send({ status: 'approved' });
+    expect(response.statusCode).toBe(403);
+    expect(response.body.error).toContain('User does not have admin privileges');
+  });
+
+  // Successful Update Tests
+  it('should return 200 and update status to "approved" for a valid admin', async () => {
+    admin.auth().verifyIdToken.mockResolvedValue(adminUserToken);
+    admin.firestore().collection().doc().get.mockResolvedValue({
+      exists: true,
+      data: () => ({ priestAuthId: 'priest-to-verify-uid', status: 'pending' })
+    });
+    admin.firestore().collection().doc().update.mockResolvedValue({});
+    admin.auth().setCustomUserClaims.mockResolvedValue({});
+
+    const response = await request(app)
+      .put(`/admin/verify-request/${mockRequestId}`)
+      .set('Authorization', 'Bearer admintoken789')
+      .send({ status: 'approved', adminNotes: 'Looks good.' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.newStatus).toBe('approved');
+    expect(admin.firestore().collection().doc().update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'approved', adminNotes: 'Looks good.' })
+    );
+    expect(admin.auth().setCustomUserClaims).toHaveBeenCalledWith('priest-to-verify-uid', { verifiedPriest: true });
+  });
+
+  it('should return 200 and update status to "rejected" for a valid admin', async () => {
+    admin.auth().verifyIdToken.mockResolvedValue(adminUserToken);
+    admin.firestore().collection().doc().get.mockResolvedValue({
+      exists: true,
+      data: () => ({ priestAuthId: 'priest-to-verify-uid', status: 'pending' })
+    });
+    admin.firestore().collection().doc().update.mockResolvedValue({});
+
+    const response = await request(app)
+      .put(`/admin/verify-request/${mockRequestId}`)
+      .set('Authorization', 'Bearer admintoken789')
+      .send({ status: 'rejected', adminNotes: 'Info missing.' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.newStatus).toBe('rejected');
+    expect(admin.firestore().collection().doc().update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'rejected', adminNotes: 'Info missing.' })
+    );
+    expect(admin.auth().setCustomUserClaims).not.toHaveBeenCalled();
+  });
+
+  it('should not call setCustomUserClaims if priestAuthId is missing when approving', async () => {
+    admin.auth().verifyIdToken.mockResolvedValue(adminUserToken);
+    admin.firestore().collection().doc().get.mockResolvedValue({
+      exists: true,
+      data: () => ({ status: 'pending' }) // No priestAuthId in mock data
+    });
+    admin.firestore().collection().doc().update.mockResolvedValue({});
+
+    await request(app)
+      .put(`/admin/verify-request/${mockRequestId}`)
+      .set('Authorization', 'Bearer admintoken789')
+      .send({ status: 'approved' });
+
+    expect(admin.auth().setCustomUserClaims).not.toHaveBeenCalled();
+  });
+
+
+  // Validation and Logic Error Tests
+  it('should return 404 if the request ID does not exist', async () => {
+    admin.auth().verifyIdToken.mockResolvedValue(adminUserToken);
+    admin.firestore().collection().doc().get.mockResolvedValue({ exists: false });
+
+    const response = await request(app)
+      .put(`/admin/verify-request/nonexistent${mockRequestId}`)
+      .set('Authorization', 'Bearer admintoken789')
+      .send({ status: 'approved' });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.body.error).toBe('Verification request not found.');
+  });
+
+  it('should return 400 if the status in the request body is invalid', async () => {
+    admin.auth().verifyIdToken.mockResolvedValue(adminUserToken);
+    // No need to mock Firestore get for this validation error, as it's checked before DB interaction
+
+    const response = await request(app)
+      .put(`/admin/verify-request/${mockRequestId}`)
+      .set('Authorization', 'Bearer admintoken789')
+      .send({ status: 'invalid-status-value' });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body.error).toBe("Invalid status. Must be 'approved' or 'rejected'.");
+  });
+
+  it('should return 400 if status is missing in request body', async () => {
+    admin.auth().verifyIdToken.mockResolvedValue(adminUserToken);
+    const response = await request(app)
+      .put(`/admin/verify-request/${mockRequestId}`)
+      .set('Authorization', 'Bearer admintoken789')
+      .send({ adminNotes: 'Some notes' }); // Missing status
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body.error).toBe("Invalid status. Must be 'approved' or 'rejected'.");
+  });
+});
